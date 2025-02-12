@@ -2,10 +2,17 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urlparse
+import time
+import requests
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Google Custom Search API configuration
-GOOGLE_API_KEY = ''
-SEARCH_ENGINE_ID = ''
+GOOGLE_API_KEY = ""
+SEARCH_ENGINE_ID = ""
 
 def search_google(query, api_key, cx):
     """
@@ -19,116 +26,171 @@ def search_google(query, api_key, cx):
         "cx": cx
     }
     response = requests.get(url, params=params)
+    
     if response.status_code == 200:
-        return response.json().get("items", [])
+        data = response.json()
+        print("\n🔍 Google API Response:", data)  # Debugging line
+        return data.get("items", [])
     else:
-        print("Google search API error:", response.status_code)
+        print("❌ Google search API error:", response.status_code, response.text)
         return []
 
 def get_base_url(url):
     """
-    Extracts the base URL (scheme + domain) from a full URL.
-    e.g. "https://www.example.com/some/path" → "https://www.example.com"
+    Extracts the base domain from a URL.
+    Example: "https://www.example.com/some/path" → "example.com"
     """
     parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return parsed.netloc.replace("www.", "")
+
+import time
 
 def get_website_text(url):
     """
-    Fetches the given URL, cleans the page with BeautifulSoup by removing scripts and styles,
-    and returns the plain text. Returns an empty string on error.
+    Fetches a webpage using requests. If it returns status 202 or fails, it switches to Selenium.
+    Uses a User-Agent header to avoid bot detection.
     """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    for attempt in range(2):  # Try requests twice before switching to Selenium
+        try:
+            response = requests.get(url, timeout=10, headers=headers)
+            
+            if response.status_code == 202:
+                print(f"⚠️ Server returned 202 for {url}. Retrying in 3 seconds...")
+                time.sleep(3)
+                continue  # Retry loop
+            
+            if response.status_code != 200:
+                print(f"❌ Error {response.status_code} fetching {url}. Switching to Selenium.")
+                return get_website_text_selenium(url)  # Use Selenium
+            
+            response.encoding = response.apparent_encoding
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+
+            text = soup.get_text(separator=" ", strip=True)
+            print(f"📝 Extracted {len(text)} characters from {url}")
+
+            if len(text) < 50:  # If content is too small, try Selenium
+                print(f"⚠️ Content might be hidden in JavaScript! Using Selenium for {url}")
+                return get_website_text_selenium(url)
+            
+            return text
+        
+        except Exception as e:
+            print(f"⚠️ Error fetching {url} with requests: {e}. Switching to Selenium.")
+            return get_website_text_selenium(url)
+
+    print(f"⚠️ All request attempts failed for {url}. Switching to Selenium.")
+    return get_website_text_selenium(url)
+
+def get_website_text_selenium(url):
+    """
+    Uses Selenium to fetch content from JavaScript-heavy pages.
+    Runs Chrome in headless mode and ensures text is extracted.
+    """
+    print(f"🌐 Using Selenium to fetch {url}...")
+
+    options = Options()
+    options.add_argument("--headless")  # Run in headless mode
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("start-maximized")
+    options.add_argument("disable-infobars")
+    options.add_argument("--disable-extensions")
+
+    # Initialize the WebDriver
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    
+    driver.get(url)
+    time.sleep(5)  # Allow JavaScript to load
+
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return ""
-        # Set the encoding based on the response's apparent encoding.
-        response.encoding = response.apparent_encoding
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        text = soup.get_text(separator=" ", strip=True)
-        return text
+        text = driver.find_element("tag name", "body").text  # Get full page text
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        return ""
+        print(f"⚠️ Error extracting text with Selenium for {url}: {e}")
+        text = ""
+
+    driver.quit()
+    
+    print(f"📝 Extracted {len(text)} characters using Selenium for {url}")
+    return text
+
+
 
 def find_page_via_google(homepage, candidate_phrases, api_key, cx):
     """
-    For the given homepage URL, try each candidate phrase by building a query like:
-      site:example.com "candidate phrase"
-    Return the first result that:
-      - Comes from the same domain (and is not simply the homepage)
-      - Returns some text content.
-    If no candidate yields a valid page, returns (None, None).
+    Searches Google for relevant pages (e.g., About Us, Programs).
+    Returns the first valid URL and its content.
     """
-    base = get_base_url(homepage)
+    base_domain = get_base_url(homepage)  # Get base domain
+
     for phrase in candidate_phrases:
-        query = f"site:{base} {phrase}"
-        print("Searching with query:", query)
+        query = f"site:{base_domain} {phrase}"
+        print(f"🔎 Searching Google for: {query}")
+        
         results = search_google(query, api_key, cx)
+        if not results:
+            print(f"⚠️ No results found for: {query}")
+            continue  # Skip if no results
+        
         for result in results:
-            url = result.get('link')
-            # Make sure the URL is on the same domain and is not the homepage
-            if url and get_base_url(url) == base and url != base:
+            url = result.get("link")
+            print(f"✅ Checking URL: {url}")  # Debugging
+            
+            if url and get_base_url(url) == base_domain and url != homepage:
                 content = get_website_text(url)
-                if content:
+                if content:  # Ensure the page has content
+                    print(f"🎯 Found valid page: {url}")
                     return url, content
-    return None, None
+
+    return None, None  # No valid result found
 
 # Define candidate search phrases for each type of page.
-about_candidate_phrases = [
-    "about us",
-    "about-us",
-    "about",
-    "company info",
-    "our story"
-]
+about_candidate_phrases = ["about us", "about-us", "about", "company info", "our story"]
+programs_candidate_phrases = ["programs", "training", "courses", "classes", "workshops"]
 
-programs_candidate_phrases = [
-    "programs",
-    "training",
-    "courses",
-    "classes",
-    "workshops"
-]
-
-# List of website homepage URLs you already have.
+# List of website homepage URLs.
 websites = [
     "https://www.alliance-francaise.ca/",
-    "https://www.unionvillecollege.com/",
     # Add more homepage URLs as needed...
 ]
 
 data = []
 
 for homepage in websites:
-    print(f"\nProcessing website: {homepage}")
+    print(f"\n🏠 Processing website: {homepage}")
     
-    # Try to find an About Us page via the Google search API.
+    # Find About Us page
     about_url, about_content = find_page_via_google(homepage, about_candidate_phrases, GOOGLE_API_KEY, SEARCH_ENGINE_ID)
     if not about_url:
-        print("No About page found via search; falling back to homepage.")
+        print("⚠️ No About page found via search; using homepage instead.")
         about_url = homepage
         about_content = get_website_text(homepage)
     
-    # Try to find a Programs/Training page via the Google search API.
+    # Find Programs/Training page
     programs_url, programs_content = find_page_via_google(homepage, programs_candidate_phrases, GOOGLE_API_KEY, SEARCH_ENGINE_ID)
     if not programs_url:
-        print("No Programs page found via search; falling back to homepage.")
+        print("⚠️ No Programs page found via search; using homepage instead.")
         programs_url = homepage
         programs_content = get_website_text(homepage)
     
-    # Save the results in our data list.
+    # Store results
     data.append({
         "Homepage": homepage,
         "About_Page": about_url,
-        "About_Content": about_content,
+        "About_Content": about_content[:500],  # Limit content preview
         "Programs_Page": programs_url,
-        "Programs_Content": programs_content
+        "Programs_Content": programs_content[:500]  # Limit content preview
     })
 
-# Create a DataFrame and export the results to a CSV file with proper encoding.
+# Convert results to a DataFrame and save to CSV
 df = pd.DataFrame(data)
 df.to_csv("scraped_pages_google.csv", index=False, encoding='utf-8-sig')
-print("CSV file created successfully!")
+
+print("\n✅ CSV file created successfully!")
