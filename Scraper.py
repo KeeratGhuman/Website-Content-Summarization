@@ -3,16 +3,13 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urlparse
 import time
-import requests
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+
+# Import SeleniumBase's SB manager for UC Mode
+from seleniumbase import SB
 
 # Google Custom Search API configuration
-GOOGLE_API_KEY = ""
-SEARCH_ENGINE_ID = ""
+GOOGLE_API_KEY = "AIzaSyCYtY13p3-ofE0XH6ouOLVdY59v4NUFqnY"
+SEARCH_ENGINE_ID = "90158360fb94b4675"
 
 def search_google(query, api_key, cx):
     """
@@ -29,7 +26,7 @@ def search_google(query, api_key, cx):
     
     if response.status_code == 200:
         data = response.json()
-        print("\n🔍 Google API Response:", data)  # Debugging line
+        print("\n🔍 Google API Response:", data)
         return data.get("items", [])
     else:
         print("❌ Google search API error:", response.status_code, response.text)
@@ -43,92 +40,78 @@ def get_base_url(url):
     parsed = urlparse(url)
     return parsed.netloc.replace("www.", "")
 
-import time
-
 def get_website_text(url):
     """
-    Fetches a webpage using requests. If it returns status 202 or fails, it switches to Selenium.
-    Uses a User-Agent header to avoid bot detection.
+    Attempts to fetch a webpage using requests.
+    If a Cloudflare challenge or other issue is detected, it falls back to SeleniumBase UC mode.
     """
     headers = {"User-Agent": "Mozilla/5.0"}
-    
-    for attempt in range(2):  # Try requests twice before switching to Selenium
-        try:
-            response = requests.get(url, timeout=10, headers=headers)
-            
-            if response.status_code == 202:
-                print(f"⚠️ Server returned 202 for {url}. Retrying in 3 seconds...")
-                time.sleep(3)
-                continue  # Retry loop
-            
-            if response.status_code != 200:
-                print(f"❌ Error {response.status_code} fetching {url}. Switching to Selenium.")
-                return get_website_text_selenium(url)  # Use Selenium
-            
-            response.encoding = response.apparent_encoding
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            for tag in soup(["script", "style"]):
-                tag.decompose()
-
-            text = soup.get_text(separator=" ", strip=True)
-            print(f"📝 Extracted {len(text)} characters from {url}")
-
-            if len(text) < 50:  # If content is too small, try Selenium
-                print(f"⚠️ Content might be hidden in JavaScript! Using Selenium for {url}")
-                return get_website_text_selenium(url)
-            
-            return text
+    try:
+        response = requests.get(url, timeout=10, headers=headers)
         
-        except Exception as e:
-            print(f"⚠️ Error fetching {url} with requests: {e}. Switching to Selenium.")
+        # If the status is not OK, fall back to SeleniumBase UC mode.
+        if response.status_code != 200:
+            print(f"❌ Error {response.status_code} fetching {url}. Falling back to SeleniumBase UC mode.")
             return get_website_text_selenium(url)
+        
+        response.encoding = response.apparent_encoding
 
-    print(f"⚠️ All request attempts failed for {url}. Switching to Selenium.")
-    return get_website_text_selenium(url)
+        # Check for typical Cloudflare challenge indicators.
+        lower_text = response.text.lower()
+        if ("verify you are human" in lower_text or 
+            "cf-browser-verification" in response.text or 
+            "attention required" in lower_text):
+            print(f"⚠️ Cloudflare challenge detected for {url}. Using SeleniumBase UC mode.")
+            return get_website_text_selenium(url)
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ", strip=True)
+        
+        # If the text seems too short, it might be that the real content is loaded dynamically.
+        if len(text) < 50:
+            print(f"⚠️ Content too short for {url}. Possibly dynamic content. Using SeleniumBase UC mode.")
+            return get_website_text_selenium(url)
+        
+        print(f"📝 Extracted {len(text)} characters from {url} using requests.")
+        return text
+    except Exception as e:
+        print(f"⚠️ Exception during requests for {url}: {e}. Using SeleniumBase UC mode.")
+        return get_website_text_selenium(url)
 
 def get_website_text_selenium(url):
     """
-    Uses Selenium to fetch content from JavaScript-heavy pages.
-    Runs Chrome in headless mode and ensures text is extracted.
+    Uses SeleniumBase in UC Mode (Undetected-Chromedriver) to fetch page content,
+    bypassing anti-bot measures and Cloudflare challenges.
     """
-    print(f"🌐 Using Selenium to fetch {url}...")
-
-    options = Options()
-    options.add_argument("--headless")  # Run in headless mode
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("start-maximized")
-    options.add_argument("disable-infobars")
-    options.add_argument("--disable-extensions")
-
-    # Initialize the WebDriver
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    
-    driver.get(url)
-    time.sleep(5)  # Allow JavaScript to load
-
-    try:
-        text = driver.find_element("tag name", "body").text  # Get full page text
-    except Exception as e:
-        print(f"⚠️ Error extracting text with Selenium for {url}: {e}")
-        text = ""
-
-    driver.quit()
-    
-    print(f"📝 Extracted {len(text)} characters using Selenium for {url}")
-    return text
-
-
+    print(f"🌐 Using SeleniumBase UC mode to fetch {url}...")
+    # The 'with' block automatically starts and quits the browser.
+    with SB(uc=True, test=True) as sb:
+        try:
+            # Open the URL with automatic reconnection handling.
+            sb.uc_open_with_reconnect(url, reconnect_time=4)
+        except Exception as e:
+            print(f"❌ Error connecting with SeleniumBase UC mode for {url}: {e}")
+            return ""
+        
+        # Optionally, attempt to handle a CAPTCHA if one appears.
+        try:
+            sb.uc_gui_handle_captcha()
+        except Exception as e:
+            print("ℹ️ No captcha handling required or encountered an issue:", e)
+        
+        # Extract and return the text content from the <body> element.
+        text = sb.get_text("body")
+        print(f"📝 Extracted {len(text)} characters using SeleniumBase UC mode for {url}")
+        return text
 
 def find_page_via_google(homepage, candidate_phrases, api_key, cx):
     """
     Searches Google for relevant pages (e.g., About Us, Programs).
     Returns the first valid URL and its content.
     """
-    base_domain = get_base_url(homepage)  # Get base domain
+    base_domain = get_base_url(homepage)
 
     for phrase in candidate_phrases:
         query = f"site:{base_domain} {phrase}"
@@ -137,27 +120,29 @@ def find_page_via_google(homepage, candidate_phrases, api_key, cx):
         results = search_google(query, api_key, cx)
         if not results:
             print(f"⚠️ No results found for: {query}")
-            continue  # Skip if no results
+            continue
         
         for result in results:
             url = result.get("link")
-            print(f"✅ Checking URL: {url}")  # Debugging
+            print(f"✅ Checking URL: {url}")
             
             if url and get_base_url(url) == base_domain and url != homepage:
                 content = get_website_text(url)
-                if content:  # Ensure the page has content
+                if content:
                     print(f"🎯 Found valid page: {url}")
                     return url, content
 
-    return None, None  # No valid result found
+    return None, None
 
-# Define candidate search phrases for each type of page.
+# Candidate search phrases for each type of page.
 about_candidate_phrases = ["about us", "about-us", "about", "company info", "our story"]
 programs_candidate_phrases = ["programs", "training", "courses", "classes", "workshops"]
 
 # List of website homepage URLs.
 websites = [
+    "https://www.unionvillecollege.com/",
     "https://www.alliance-francaise.ca/",
+    "https://2captcha.com/demo/cloudflare-turnstile-challenge",
     # Add more homepage URLs as needed...
 ]
 
@@ -180,17 +165,17 @@ for homepage in websites:
         programs_url = homepage
         programs_content = get_website_text(homepage)
     
-    # Store results
+    # Store results with a content preview (first 500 characters)
     data.append({
         "Homepage": homepage,
         "About_Page": about_url,
-        "About_Content": about_content[:500],  # Limit content preview
+        "About_Content": about_content[:500],
         "Programs_Page": programs_url,
-        "Programs_Content": programs_content[:500]  # Limit content preview
+        "Programs_Content": programs_content[:500]
     })
 
-# Convert results to a DataFrame and save to CSV
+# Convert the results to a DataFrame and save to CSV.
 df = pd.DataFrame(data)
-df.to_csv("scraped_pages_google.csv", index=False, encoding='utf-8-sig')
+df.to_csv("scraped_pages_uc_mode.csv", index=False, encoding='utf-8-sig')
 
 print("\n✅ CSV file created successfully!")
