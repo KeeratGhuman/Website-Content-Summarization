@@ -82,12 +82,14 @@ def get_website_text(url):
 
 def get_website_text_selenium(url):
     """
-    Uses SeleniumBase in UC Mode (Undetected-Chromedriver) to fetch page content,
-    bypassing anti-bot measures and Cloudflare challenges.
+    Uses SeleniumBase in UC Mode (Undetected-Chromedriver) in headless mode
+    to fetch page content, bypassing anti-bot measures and Cloudflare challenges.
+    
+    The headless mode means that Chrome runs in the background without opening any windows.
     """
-    print(f"🌐 Using SeleniumBase UC mode to fetch {url}...")
-    # The 'with' block automatically starts and quits the browser.
-    with SB(uc=True, test=True) as sb:
+    print(f"🌐 Using SeleniumBase UC mode (headless) to fetch {url}...")
+    # Using headless=True ensures no Chrome window is opened.
+    with SB(uc=True, headless=True, test=True) as sb:
         try:
             # Open the URL with automatic reconnection handling.
             sb.uc_open_with_reconnect(url, reconnect_time=4)
@@ -142,7 +144,19 @@ programs_candidate_phrases = ["programs", "training", "courses", "classes", "wor
 websites = [
     "https://www.unionvillecollege.com/",
     "https://www.alliance-francaise.ca/",
-    "https://2captcha.com/demo/cloudflare-turnstile-challenge",
+    "https://www.hwmusic.ca/", 
+    "https://www.upluseducation.ca/", 
+    "https://www.writingriot.com/", 
+    "https://www.yorkregiontutoring.com/", 
+    "https://www.tutoringacademy.ca/", 
+    "https://welcomecentre.ca/", 
+    "https://katelanguage.org/", 
+    "https://www.tutoringacademy.ca/", 
+    "https://www.studentscholarscentre.com/", 
+    "https://www.tcdsb.org/",
+    "https://www.alliancecoachingacademy.com/", 
+    "https://www.oxfordlearning.com/", 
+    "https://bestbrains.com/"
     # Add more homepage URLs as needed...
 ]
 
