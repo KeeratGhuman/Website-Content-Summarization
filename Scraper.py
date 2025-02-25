@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urlparse
 import time
+import re
 
 # Import SeleniumBase's SB manager for UC Mode
 from seleniumbase import SB
@@ -88,25 +89,33 @@ def get_website_text_selenium(url):
     The headless mode means that Chrome runs in the background without opening any windows.
     """
     print(f"🌐 Using SeleniumBase UC mode (headless) to fetch {url}...")
-    # Using headless=True ensures no Chrome window is opened.
     with SB(uc=True, headless=True, test=True) as sb:
         try:
-            # Open the URL with automatic reconnection handling.
             sb.uc_open_with_reconnect(url, reconnect_time=4)
         except Exception as e:
             print(f"❌ Error connecting with SeleniumBase UC mode for {url}: {e}")
             return ""
         
-        # Optionally, attempt to handle a CAPTCHA if one appears.
         try:
             sb.uc_gui_handle_captcha()
         except Exception as e:
             print("ℹ️ No captcha handling required or encountered an issue:", e)
         
-        # Extract and return the text content from the <body> element.
         text = sb.get_text("body")
         print(f"📝 Extracted {len(text)} characters using SeleniumBase UC mode for {url}")
         return text
+
+def summarize_text(text, num_sentences=2):
+    """
+    Cleans up the text by collapsing multiple spaces and returns the first couple of sentences.
+    """
+    # Collapse whitespace and strip leading/trailing spaces.
+    cleaned_text = re.sub(r'\s+', ' ', text).strip()
+    # Split text into sentences using a simple regex.
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned_text)
+    if len(sentences) < num_sentences:
+        return cleaned_text
+    return " ".join(sentences[:num_sentences])
 
 def find_page_via_google(homepage, candidate_phrases, api_key, cx):
     """
@@ -142,21 +151,10 @@ programs_candidate_phrases = ["programs", "training", "courses", "classes", "wor
 
 # List of website homepage URLs.
 websites = [
+    "https://www.yips.com/",
     "https://www.unionvillecollege.com/",
     "https://www.alliance-francaise.ca/",
     "https://www.hwmusic.ca/", 
-    "https://www.upluseducation.ca/", 
-    "https://www.writingriot.com/", 
-    "https://www.yorkregiontutoring.com/", 
-    "https://www.tutoringacademy.ca/", 
-    "https://welcomecentre.ca/", 
-    "https://katelanguage.org/", 
-    "https://www.tutoringacademy.ca/", 
-    "https://www.studentscholarscentre.com/", 
-    "https://www.tcdsb.org/",
-    "https://www.alliancecoachingacademy.com/", 
-    "https://www.oxfordlearning.com/", 
-    "https://bestbrains.com/"
     # Add more homepage URLs as needed...
 ]
 
@@ -179,13 +177,17 @@ for homepage in websites:
         programs_url = homepage
         programs_content = get_website_text(homepage)
     
-    # Store results with a content preview (first 500 characters)
+    # Clean up and summarize the content into a couple of sentences
+    about_summary = summarize_text(about_content, num_sentences=2)
+    programs_summary = summarize_text(programs_content, num_sentences=2)
+    
+    # Store results
     data.append({
         "Homepage": homepage,
         "About_Page": about_url,
-        "About_Content": about_content[:500],
+        "About_Content": about_summary,
         "Programs_Page": programs_url,
-        "Programs_Content": programs_content[:500]
+        "Programs_Content": programs_summary
     })
 
 # Convert the results to a DataFrame and save to CSV.
